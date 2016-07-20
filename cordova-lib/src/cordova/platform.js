@@ -187,28 +187,61 @@ function addHelper(cmd, hooksRunner, projectRoot, targets, opts) {
                 }
 
                 var destination = path.resolve(projectRoot, 'platforms', platform);
-                var promise = cmd === 'add' ?
-                    PlatformApi.createPlatform.bind(null, destination, cfg, options, events) :
-                    PlatformApi.updatePlatform.bind(null, destination, options, events);
+                var promise;
+                if(cmd === 'update') {
 
-                return promise()
+                    promise = platformMetadata.getPlatformVersions(projectRoot);
+                    promise.then(function(res){
+
+                        var previousInfo = res.find(function(elem){
+                            if(elem.platform === platform) {
+                                return true;
+                            }
+                        });
+
+                        if(previousInfo.version != platDetails.version) {
+                            var backupPath = destination + "@" + previousInfo.version;
+                            if(!fs.existsSync(backupPath)){
+                                events.emit('log',"backing up to " + backupPath);
+                                shell.cp('-R',path.join(destination,"/*"),backupPath);
+                            }
+                            else {
+                                events.emit('log',"Skipping backup. Path exists at " + backupPath);
+                            }
+                        }
+                        else {
+                            events.emit('log',"Skipping backup. Version is the same. " + previousInfo.version);
+                        }
+                        promise = PlatformApi.updatePlatform.bind(null, destination, options, events);
+                        return promise();
+                    });
+                }
+                else {
+                    promise = PlatformApi.createPlatform.bind(null, destination, cfg, options, events)();
+                }
+
+                return promise
                 .then(function () {
-                    return prepare.preparePlatforms([platform], projectRoot, { searchpath: opts.searchpath });
+                    if (!opts.restoring) {
+                        return prepare.preparePlatforms([platform], projectRoot, { searchpath: opts.searchpath });
+                    }
                 })
                 .then(function() {
-                    if (cmd == 'add') {
+                    if (cmd == 'add' && !opts.restoring) {
                         return installPluginsForNewPlatform(platform, projectRoot, opts);
                     }
                 })
                 .then(function () {
-                    // Call prepare for the current platform.
-                    var prepOpts = {
-                        platforms :[platform],
-                        searchpath :opts.searchpath,
-                        fetch: opts.fetch || false,
-                        save: opts.save || false
-                    };
-                    return require('./cordova').raw.prepare(prepOpts);
+                    if (!opts.restoring) {
+                        // Call prepare for the current platform if we're not restoring from config.xml
+                        var prepOpts = {
+                            platforms :[platform],
+                            searchpath :opts.searchpath,
+                            fetch: opts.fetch || false,
+                            save: opts.save || false
+                        };
+                        return require('./cordova').raw.prepare(prepOpts);
+                    }
                 })
                 .then(function() {
                     var saveVersion = !spec || semver.validRange(spec, true);
